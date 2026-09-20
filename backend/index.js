@@ -4,6 +4,11 @@ import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import 'dotenv/config';
 import db from './db.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -19,7 +24,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api/auth/google', (req, res) => {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
-    redirect_uri: 'http://localhost:3001/api/auth/google/callback',
+    redirect_uri: `${process.env.APP_URL}/api/auth/google/callback`,
     response_type: 'code',
     scope: 'openid email profile'
   });
@@ -36,7 +41,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: 'http://localhost:3001/api/auth/google/callback',
+      redirect_uri: `${process.env.APP_URL}/api/auth/google/callback`,
       grant_type: 'authorization_code'
     })
   });
@@ -48,7 +53,8 @@ app.get('/api/auth/google/callback', async (req, res) => {
   });
 
   const profile = await profileResponse.json();
-    const token = jwt.sign(
+
+  const token = jwt.sign(
     { userId: profile.id, email: profile.email, name: profile.name },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
@@ -56,12 +62,13 @@ app.get('/api/auth/google/callback', async (req, res) => {
 
   res.cookie('token', token, {
     httpOnly: true,
-    secure: false,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax'
   });
 
-  res.redirect('http://localhost:5173/dashboard');
+  res.redirect(`${process.env.APP_URL}/dashboard`);
 });
+
 function requireAuth(req, res, next) {
   const token = req.cookies.token;
 
@@ -77,10 +84,12 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 }
+
 app.get('/api/capsules', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM capsules WHERE user_id = ?').all(req.user.userId);
   res.json(rows);
 });
+
 app.post('/api/capsules', requireAuth, (req, res) => {
   const {
     project_name,
@@ -122,6 +131,7 @@ app.post('/api/capsules', requireAuth, (req, res) => {
   const newCapsule = db.prepare('SELECT * FROM capsules WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(newCapsule);
 });
+
 app.put('/api/capsules/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM capsules WHERE id = ? AND user_id = ?')
     .get(req.params.id, req.user.userId);
@@ -181,6 +191,7 @@ app.put('/api/capsules/:id', requireAuth, (req, res) => {
   const updated = db.prepare('SELECT * FROM capsules WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
+
 app.delete('/api/capsules/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM capsules WHERE id = ? AND user_id = ?')
     .get(req.params.id, req.user.userId);
@@ -194,6 +205,13 @@ app.delete('/api/capsules/:id', requireAuth, (req, res) => {
 
   res.status(204).send();
 });
+
+app.use(express.static(path.join(__dirname, '../frontend/dist')));
+
+app.get('/{*splat}', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
